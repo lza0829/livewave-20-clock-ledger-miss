@@ -1,12 +1,15 @@
 from app.services import 时间
 
 
-def 尝试关窗(conn, 房间键: str, 权威水位: str, 允许迟到秒: int, 窗长秒: int, 处理时: str) -> int:
+def 尝试关窗(conn, 房间键: str, 权威水位: str, 允许迟到秒: int, 窗长秒: int, 处理时: str, 账本世代: int = 0) -> int:
     """权威水位 >= 窗止 时关闭开启窗（发射）；允许迟到只影响关闭后能否再修正，不推迟关闭。
 
-    权威水位由全局时钟口径选定之钟推进（见 modules/双钟水位线），本函数不得另看一只钟。
+    权威水位由口径账本现行世代选定之钟推进（见 modules/口径账本），本函数不得另看一只钟。
+    硬约束：关闭结论必须盖账本世代戳（世代>0）；无世代调用一律不关，杜绝两套钟混出结论。
     """
-    del 允许迟到秒, 窗长秒  
+    del 允许迟到秒, 窗长秒
+    if not 账本世代:
+        return 0
     关闭数 = 0
     rows = conn.execute(
         "SELECT * FROM 热度窗 WHERE 房间键=? AND 状态='开启' ORDER BY 窗起事件时",
@@ -15,8 +18,9 @@ def 尝试关窗(conn, 房间键: str, 权威水位: str, 允许迟到秒: int, 
     for 窗 in rows:
         if 时间.解析(权威水位) >= 时间.解析(窗["窗止事件时"]):
             conn.execute(
-                "UPDATE 热度窗 SET 状态='已关闭', 关闭处理时=?, 版本=CASE WHEN 版本=0 THEN 1 ELSE 版本 END WHERE 窗键=?",
-                (处理时, 窗["窗键"]),
+                """UPDATE 热度窗 SET 状态='已关闭', 关闭处理时=?,
+                   版本=CASE WHEN 版本=0 THEN 1 ELSE 版本 END, 账本世代=? WHERE 窗键=?""",
+                (处理时, 账本世代, 窗["窗键"]),
             )
             关闭数 += 1
     return 关闭数

@@ -3,7 +3,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import 夹具目录, 连接
-from app.modules import 双钟水位线
+from app.seed import 此刻
+from app.modules import 双钟水位线, 口径账本
 from app.services import 装载, 贯验, 目录
 
 路由 = APIRouter(prefix="/api")
@@ -91,14 +92,28 @@ def 双钟水位():
 
 @路由.post("/口径")
 def 切口径(体: 口径请求):
-    """全局时钟口径切换：失败闭——已有流数据拒绝，仅全空可原子切换。"""
+    """时钟口径切换：账本强制切换重放——同票作废旧世代、按新钟重放未关闭边界、写新世代。
+
+    硬约束冲突（空白壳/世代漂移/并发锁失败）整票回滚并 409，站规与旧关闭集原样保留。
+    """
+    from app.modules import 口径账本 as 账
     conn = 连接()
     try:
-        成, 消息 = 双钟水位线.切换口径(conn, 体.口径)
-        if not 成:
-            raise HTTPException(409, 消息)
+        try:
+            果 = 口径账本.改钟重放(conn, 体.口径, 批号="接口改钟", 时刻=此刻())
+        except 口径账本.账本冲突 as e:
+            conn.rollback()
+            raise HTTPException(409, str(e))
         conn.commit()
-        return {"口径": 双钟水位线.全局口径(conn), "消息": 消息}
+        if not 果.get("切换"):
+            return {"口径": 账.全局口径(conn), "消息": 果["消息"], "重放": False}
+        return {
+            "口径": 账.全局口径(conn),
+            "消息": "系统全空原子切换" if 果.get("全空切换") else "强制切换重放完成",
+            "重放": not 果.get("全空切换"),
+            "账本世代": 果.get("账本世代"),
+            "明细": 果.get("房间", []),
+        }
     finally:
         conn.close()
 

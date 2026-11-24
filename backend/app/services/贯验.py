@@ -7,11 +7,10 @@ def 跑贯验() -> dict:
     conn = 连接()
     try:
         问题 = []
-        try:
-            from app.modules import 口径账本 as _账
-            _ = _账.查账本(conn)
-        except Exception:
-            pass
+        from app.modules import 口径账本 as _账
+        核证 = _账.查账本(conn)
+        if not 核证["valid"]:
+            问题.extend([f"口径账本核证失败:{p}" for p in 核证["问题"]])
         事件数 = conn.execute("SELECT COUNT(*) FROM 互动事件").fetchone()[0]
         已关闭 = conn.execute("SELECT * FROM 热度窗 WHERE 状态='已关闭'").fetchall()
         撤回数 = conn.execute("SELECT COUNT(*) FROM 撤回单").fetchone()[0]

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+backend/data/
+
+# Node / 前端构建
+node_modules/
+dist/
+
+# 本地数据卷与库
+*.db
+*.db-wal
+*.db-shm

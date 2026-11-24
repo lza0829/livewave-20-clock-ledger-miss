@@ -26,7 +26,8 @@ export default function 水位线页() {
       </p>
       <div className="提示条">
         当前全局口径：<strong>{图.全局口径}</strong>（水位即{图.全局口径 === "事件时" ? "事件时" : "处理时"}水位）。
-        口径切换失败闭：已有流数据时拒绝，仅系统全空可原子切换整票重放。
+        口径权威在账本（钉死：{String(图.账本钉死)}）：改钟走强制切换重放——同票作废旧世代、按新钟重放未关闭边界、写新世代，
+        旧关闭集冻结不回溯；只改站规字段不换钟。
       </div>
       <div className="行">
         <button className="次" onClick={() => 切("事件时")}>切到事件时口径</button>
@@ -40,14 +41,14 @@ export default function 水位线页() {
         <table>
           <thead>
             <tr>
-              <th>房间</th><th>标题</th><th>口径戳</th><th>水位（权威）</th><th>valid</th>
+              <th>房间</th><th>标题</th><th>口径戳</th><th>账本世代</th><th>水位（权威）</th><th>valid</th>
               <th>审计事件时</th><th>审计处理时</th><th>允许迟到秒</th><th>水位更新处理时</th>
             </tr>
           </thead>
           <tbody>
             {图.房间.map((w) => (
               <tr key={w.房间键}>
-                <td>{w.房间键}</td><td>{w.标题}</td><td>{w.口径}</td>
+                <td>{w.房间键}</td><td>{w.标题}</td><td>{w.口径}</td><td>{w.账本世代 || "—"}</td>
                 <td className="码">{w.水位}</td>
                 <td><span className={`徽章 ${w.有效 ? "通" : "败"}`}>{w.有效 ? "有效" : "口径漂移"}</span></td>
                 <td className="码">{w.审计事件时 || "—"}</td>

@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS 口径账本 (
   生效水位 TEXT NOT NULL DEFAULT '',
   账本世代 INTEGER NOT NULL DEFAULT 0,
   批号 TEXT NOT NULL DEFAULT '',
-  时刻 TEXT NOT NULL DEFAULT ''
+  时刻 TEXT NOT NULL DEFAULT '',
+  状态 TEXT NOT NULL DEFAULT '现行'
 );
 
 CREATE TABLE IF NOT EXISTS 站规 (
@@ -61,7 +62,8 @@ CREATE TABLE IF NOT EXISTS 热度窗 (
   送礼合计 INTEGER NOT NULL DEFAULT 0,
   事件笔数 INTEGER NOT NULL DEFAULT 0,
   关闭处理时 TEXT NOT NULL DEFAULT '',
-  版本 INTEGER NOT NULL DEFAULT 0
+  版本 INTEGER NOT NULL DEFAULT 0,
+  账本世代 INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS 撤回单 (
   编号 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,15 +104,16 @@ def 初始化库() -> None:
     conn = 连接()
     conn.executescript(建表)
     _迁移水位线(conn)
+    _迁移口径账本(conn)
     规 = {
         "站名": "播浪",
         "窗长秒": "60",
         "允许迟到秒": "30",
         "时钟口径": "事件时",
         "水位推进策略": "全局单一口径：口径=事件时→水位=已见最大事件时（处理时仅审计）；口径=处理时→水位=已见最大处理时（事件时仅对齐窗键）",
-        "关窗条件": "权威水位>=窗止即关闭发射（只看口径选定之钟）",
+        "关窗条件": "权威水位>=窗止即关闭发射（只看账本现行世代口径，关窗行带账本世代戳）",
         "旁路条件": "权威水位>=窗止+允许迟到",
-        "口径切换": "失败闭：已有流数据禁止切换；仅系统全空可原子切换并整票重放",
+        "口径切换": "账本强制切换重放：改钟同票作废旧账本→按新钟重放未关闭边界→写新世代；禁止只改站规不重放；系统全空可原子切换",
         "骨架": "互动事件入流→事件时间水位线推进→热度窗关闭发射→迟到修正撤回→窗输出与撤回互证",
     }
     for k, v in 规.items():
@@ -143,3 +146,48 @@ def _迁移水位线(conn) -> None:
             conn.execute("ALTER TABLE 水位线 DROP COLUMN 事件时水位")
         except Exception:
             pass
+
+
+def _迁移口径账本(conn) -> None:
+    """账本接管钟：补状态列、热度窗补账本世代戳、清空白壳、追认账本前历史为世代1。"""
+    from app.services import 时间 as _时间
+    账列 = {r["name"] for r in conn.execute("PRAGMA table_info(口径账本)")}
+    if "状态" not in 账列:
+        conn.execute("ALTER TABLE 口径账本 ADD COLUMN 状态 TEXT NOT NULL DEFAULT '现行'")
+    # 老 bug（20-clock-ledger-miss）会落口径/生效水位空白的空壳世代：核证永不采信，清掉。
+    conn.execute("DELETE FROM 口径账本 WHERE 口径='' OR 生效水位=''")
+    窗列 = {r["name"] for r in conn.execute("PRAGMA table_info(热度窗)")}
+    if "账本世代" not in 窗列:
+        conn.execute("ALTER TABLE 热度窗 ADD COLUMN 账本世代 INTEGER NOT NULL DEFAULT 0")
+
+    有有效账本 = conn.execute(
+        "SELECT 1 FROM 口径账本 WHERE 口径!='' AND 生效水位!='' LIMIT 1"
+    ).fetchone()
+    有流数据 = conn.execute("SELECT 1 FROM 互动事件 LIMIT 1").fetchone() or conn.execute(
+        "SELECT 1 FROM 热度窗 LIMIT 1"
+    ).fetchone()
+    if 有有效账本:
+        # 已有账本：把漏盖戳的历史关闭行追认到本房现行世代。
+        for w in conn.execute("SELECT 房间键 FROM 水位线"):
+            账 = conn.execute(
+                "SELECT 账本世代 FROM 口径账本 WHERE 房间键=? AND 状态='现行' ORDER BY 账本世代 DESC LIMIT 1",
+                (w["房间键"],),
+            ).fetchone()
+            if 账:
+                conn.execute(
+                    "UPDATE 热度窗 SET 账本世代=? WHERE 房间键=? AND 账本世代=0",
+                    (账["账本世代"], w["房间键"]),
+                )
+    elif 有流数据:
+        # 账本前时代：当时站规钟即事实选定钟，逐房追认世代1，历史窗同盖世代1。
+        for w in conn.execute("SELECT * FROM 水位线"):
+            口径 = w["口径"] if w["口径"] in ("事件时", "处理时") else "事件时"
+            生效 = w["水位"]
+            conn.execute(
+                "INSERT INTO 口径账本(房间键,口径,生效水位,账本世代,批号,时刻,状态) VALUES (?,?,?,?,?,?,?)",
+                (w["房间键"], 口径, 生效, 1, "迁移追认:账本前历史", 此刻(), "现行"),
+            )
+            conn.execute(
+                "UPDATE 热度窗 SET 账本世代=1 WHERE 房间键=? AND 账本世代=0", (w["房间键"],)
+            )
+    conn.commit()
